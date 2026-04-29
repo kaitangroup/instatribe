@@ -6,9 +6,9 @@
 module.exports = {
   apps: [
     {
-      name: "instatribe",
+      name: "kindred",
       script: "dist/index.cjs",
-      cwd: "/var/www/instatribe",
+      cwd: "/var/www/kindred",
 
       // Process management
       instances: "max",            // one process per CPU core
@@ -21,8 +21,8 @@ module.exports = {
       },
 
       // Logging
-      out_file: "/var/log/instatribe/app.log",
-      error_file: "/var/log/instatribe/error.log",
+      out_file: "/var/log/kindred/app.log",
+      error_file: "/var/log/kindred/error.log",
       merge_logs: true,
       log_date_format: "YYYY-MM-DD HH:mm:ss Z",
 
