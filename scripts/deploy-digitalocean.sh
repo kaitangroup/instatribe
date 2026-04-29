@@ -30,6 +30,30 @@ set -euo pipefail
 # ──────────────────────────────────────────────────────────────────────────────
 #  CONFIGURATION — EDIT THESE VALUES
 # ──────────────────────────────────────────────────────────────────────────────
+APP_NAME="instatribe"
+DOMAIN="instatribe.net"                        # e.g. kindred.example.com
+REPO_URL="https://github.com/kaitangroup/instatribe.git"
+DEPLOY_DIR="/var/www/instatribe"
+APP_USER="kindred"
+
+DB_NAME="kindred_db"
+DB_USER="kindred_user"
+DB_PASS="$(openssl rand -hex 24)"              # auto-generated; also written to .env
+
+NODE_VERSION="20"
+PORT="4003"
+# ──────────────────────────────────────────────────────────────────────────────
+
+YELLOW='\033[1;33m'; GREEN='\033[0;32m'; RED='\033[0;31m'; NC='\033[0m'
+step() { echo -e "\n${YELLOW}▶ $1${NC}"; }
+ok()   { echo -e "${GREEN}✔ $1${NC}"; }
+err()  { echo -e "${RED}✖ $1${NC}"; exit 1; }
+
+# Must be root
+[[ $EUID -ne 0 ]] && err "Run this script as root (sudo su - or sudo bash)"
+
+
+
 
 # ─── 14. Nginx config ──────────────────────────────────────────────────────────
 step "Configuring Nginx reverse proxy"
