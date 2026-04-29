@@ -10,6 +10,11 @@ import "dotenv/config";
 import { readdir, readFile } from "fs/promises";
 import { join, resolve } from "path";
 import { Pool } from "pg";
+import { fileURLToPath } from 'url';
+import path from 'path';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 if (!process.env.DATABASE_URL) {
   console.error("ERROR: DATABASE_URL is not set. Copy .env.example → .env and fill it in.");
