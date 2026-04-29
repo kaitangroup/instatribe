@@ -66,12 +66,12 @@ systemctl enable --now postgresql
 ok "PostgreSQL $(psql -V | cut -d' ' -f3) installed"
 
 # ─── 6. Create DB & user ────────────────────────────────────────────────────────
-step "Creating database: ${DB_NAME}"
-sudo -u postgres psql -tc "SELECT 1 FROM pg_user WHERE usename='${DB_USER}'" | grep -q 1 || \
-  sudo -u postgres psql -c "CREATE USER ${DB_USER} WITH PASSWORD '${DB_PASS}';"
-sudo -u postgres psql -tc "SELECT 1 FROM pg_database WHERE datname='${DB_NAME}'" | grep -q 1 || \
-  sudo -u postgres psql -c "CREATE DATABASE ${DB_NAME} OWNER ${DB_USER};"
-sudo -u postgres psql -c "GRANT ALL PRIVILEGES ON DATABASE ${DB_NAME} TO ${DB_USER};"
+#step "Creating database: ${DB_NAME}"
+#sudo -u postgres psql -tc "SELECT 1 FROM pg_user WHERE usename='${DB_USER}'" | grep -q 1 || \
+#  sudo -u postgres psql -c "CREATE USER ${DB_USER} WITH PASSWORD '${DB_PASS}';"
+#sudo -u postgres psql -tc "SELECT 1 FROM pg_database WHERE datname='${DB_NAME}'" | grep -q 1 || \
+ # sudo -u postgres psql -c "CREATE DATABASE ${DB_NAME} OWNER ${DB_USER};"
+#sudo -u postgres psql -c "GRANT ALL PRIVILEGES ON DATABASE ${DB_NAME} TO ${DB_USER};"
 ok "Database ${DB_NAME} ready"
 
 
@@ -95,16 +95,7 @@ ok "Code deployed to ${DEPLOY_DIR}"
 # ─── 10. Generate SESSION_SECRET ────────────────────────────────────────────────
 SESSION_SECRET="$(openssl rand -hex 64)"
 
-# ─── 11. Write .env ─────────────────────────────────────────────────────────────
-step "Writing .env"
-cat > ${DEPLOY_DIR}/.env <<EOF
-NODE_ENV=production
-PORT=${PORT}
-DATABASE_URL=postgresql://${DB_USER}:${DB_PASS}@localhost:5432/${DB_NAME}
-SESSION_SECRET=${SESSION_SECRET}
-ALLOWED_ORIGINS=https://${DOMAIN}
-RATE_LIMIT_MAX=300
-EOF
+
 chmod 600 ${DEPLOY_DIR}/.env
 chown ${APP_USER}:${APP_USER} ${DEPLOY_DIR}/.env
 ok ".env written (credentials stored safely)"
