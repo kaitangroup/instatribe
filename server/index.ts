@@ -1,105 +1,161 @@
 import "dotenv/config";
-import express, { Response, NextFunction } from 'express';
-import type { Request } from 'express';
+import express, { type Request, Response, NextFunction } from "express";
+import { createServer } from "http";
+import helmet from "helmet";
+import cors from "cors";
+import rateLimit from "express-rate-limit";
+import session from "express-session";
+import connectPgSimple from "connect-pg-simple";
+import { pool, testConnection } from "./db";
 import { registerRoutes } from "./routes";
-import { serveStatic } from "./static";
-import { createServer } from "node:http";
+import { setupVite, serveStatic, log } from "./vite";
 
 const app = express();
-const httpServer = createServer(app);
+const isProd = process.env.NODE_ENV === "production";
 
-declare module "http" {
-  interface IncomingMessage {
-    rawBody: unknown;
-  }
-}
-
+// ─── Security headers ──────────────────────────────────────────────────────────
 app.use(
-  express.json({
-    verify: (req, _res, buf) => {
-      req.rawBody = buf;
-    },
-  }),
+  helmet({
+    contentSecurityPolicy: isProd
+      ? {
+          directives: {
+            defaultSrc: ["'self'"],
+            scriptSrc: ["'self'", "'unsafe-inline'", "https://api.fontshare.com"],
+            styleSrc: ["'self'", "'unsafe-inline'", "https://api.fontshare.com"],
+            fontSrc: ["'self'", "https://api.fontshare.com", "data:"],
+            imgSrc: ["'self'", "data:", "https:"],
+            connectSrc: ["'self'"],
+          },
+        }
+      : false,
+    crossOriginEmbedderPolicy: false,
+  })
 );
 
-app.use(express.urlencoded({ extended: false }));
+// ─── CORS ──────────────────────────────────────────────────────────────────────
+const allowedOrigins = (process.env.ALLOWED_ORIGINS ?? "http://localhost:5000")
+  .split(",")
+  .map((o) => o.trim());
 
-export function log(message: string, source = "express") {
-  const formattedTime = new Date().toLocaleTimeString("en-US", {
-    hour: "numeric",
-    minute: "2-digit",
-    second: "2-digit",
-    hour12: true,
-  });
+app.use(
+  cors({
+    origin: (origin, callback) => {
+      // Allow same-origin (no Origin header) or explicitly listed origins
+      if (!origin || allowedOrigins.includes(origin)) {
+        callback(null, true);
+      } else {
+        callback(new Error(`CORS: origin ${origin} not allowed`));
+      }
+    },
+    credentials: true,
+  })
+);
 
-  console.log(`${formattedTime} [${source}] ${message}`);
-}
+// ─── Body parsing ──────────────────────────────────────────────────────────────
+app.use(express.json({ limit: "1mb" }));
+app.use(express.urlencoded({ extended: false, limit: "1mb" }));
 
-app.use((req, res, next) => {
+// ─── Rate limiting ─────────────────────────────────────────────────────────────
+const limiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: Number(process.env.RATE_LIMIT_MAX ?? 300),
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: "Too many requests. Please try again later." },
+  skip: (req) => !req.path.startsWith("/api"), // Only limit API routes
+});
+app.use(limiter);
+
+// Stricter limit on auth endpoints
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 20,
+  message: { error: "Too many login attempts. Try again in 15 minutes." },
+});
+app.use("/api/register", authLimiter);
+app.use("/api/login", authLimiter);
+
+// ─── Session ───────────────────────────────────────────────────────────────────
+const PgSession = connectPgSimple(session);
+
+app.use(
+  session({
+    store: new PgSession({
+      pool,
+      tableName: "user_sessions",
+      createTableIfMissing: true,
+    }),
+    name: "kindred.sid",
+    secret: process.env.SESSION_SECRET ?? "change-this-in-production",
+    resave: false,
+    saveUninitialized: false,
+    cookie: {
+      httpOnly: true,
+      secure: isProd,
+      sameSite: isProd ? "strict" : "lax",
+      maxAge: 30 * 24 * 60 * 60 * 1000, // 30 days
+    },
+  })
+);
+
+// ─── Request logging ───────────────────────────────────────────────────────────
+app.use((req: Request, res: Response, next: NextFunction) => {
   const start = Date.now();
   const path = req.path;
-  let capturedJsonResponse: Record<string, any> | undefined = undefined;
+  let capturedBody: Record<string, unknown> | undefined;
 
-  const originalResJson = res.json;
-  res.json = function (bodyJson, ...args) {
-    capturedJsonResponse = bodyJson;
-    return originalResJson.apply(res, [bodyJson, ...args]);
-  };
+  if (path.startsWith("/api")) {
+    const originalJson = res.json;
+    res.json = function (body, ...args) {
+      capturedBody = body;
+      return originalJson.apply(res, [body, ...args]);
+    };
+  }
 
   res.on("finish", () => {
-    const duration = Date.now() - start;
     if (path.startsWith("/api")) {
-      let logLine = `${req.method} ${path} ${res.statusCode} in ${duration}ms`;
-      if (capturedJsonResponse) {
-        logLine += ` :: ${JSON.stringify(capturedJsonResponse)}`;
+      const duration = Date.now() - start;
+      let bodyStr = "";
+      if (capturedBody !== undefined) {
+        bodyStr = JSON.stringify(capturedBody);
+        if (bodyStr.length > 80) bodyStr = bodyStr.slice(0, 77) + "…";
       }
-
-      log(logLine);
+      log(`${req.method} ${path} ${res.statusCode} in ${duration}ms${bodyStr ? " :: " + bodyStr : ""}`);
     }
   });
 
   next();
 });
 
+// ─── Global error handler ──────────────────────────────────────────────────────
+app.use((err: any, req: Request, res: Response, _next: NextFunction) => {
+  const status = err.status ?? err.statusCode ?? 500;
+  const message = isProd && status >= 500 ? "Internal server error" : err.message ?? "Internal server error";
+  if (status >= 500) console.error("[error]", err);
+  res.status(status).json({ error: message });
+});
+
+// ─── Bootstrap ─────────────────────────────────────────────────────────────────
 (async () => {
-  await registerRoutes(httpServer, app);
-
-  app.use((err: any, _req: Request, res: Response, next: NextFunction) => {
-    const status = err.status || err.statusCode || 500;
-    const message = err.message || "Internal Server Error";
-
-    console.error("Internal Server Error:", err);
-
-    if (res.headersSent) {
-      return next(err);
-    }
-
-    return res.status(status).json({ message });
-  });
-
-  // importantly only setup vite in development and after
-  // setting up all the other routes so the catch-all route
-  // doesn't interfere with the other routes
-  if (process.env.NODE_ENV === "production") {
-    serveStatic(app);
-  } else {
-    const { setupVite } = await import("./vite");
-    await setupVite(httpServer, app);
+  try {
+    // Verify DB connectivity before accepting traffic
+    await testConnection();
+  } catch (err) {
+    console.error("[startup] Database connection failed:", err);
+    process.exit(1);
   }
 
-  // ALWAYS serve the app on the port specified in the environment variable PORT
-  // Other ports are firewalled. Default to 5000 if not specified.
-  // this serves both the API and the client.
-  // It is the only port that is not firewalled.
-  const port = parseInt(process.env.PORT || "5000", 10);
-  httpServer.listen(
-    {
-      port,
-      host: "0.0.0.0",
-      reusePort: true,
-    },
-    () => {
-      log(`serving on port ${port}`);
-    },
-  );
+  const httpServer = createServer(app);
+  registerRoutes(httpServer, app);
+
+  if (isProd) {
+    serveStatic(app);
+  } else {
+    await setupVite(app, httpServer);
+  }
+
+  const PORT = Number(process.env.PORT ?? 5000);
+  httpServer.listen(PORT, "0.0.0.0", () => {
+    log(`serving on port ${PORT}`);
+  });
 })();
